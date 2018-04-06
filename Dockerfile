@@ -75,8 +75,8 @@ ENV CATALINA_OPTS="${JAVA_OPTIONS:--Xmx2g -XX:+UseParNewGC \
 # or use dynamic ports.
 EXPOSE ${HTTP_PORT:-8080} ${HTTPS_PORT:-8443}
 
-COPY scripts/entrypoint.sh /
-ENTRYPOINT ["/entrypoint.sh"]
+COPY scripts/entrypoint_ce.sh /
+ENTRYPOINT ["/entrypoint_ce.sh"]
 
 # Default action executed by entrypoint script.
 CMD ["run"]
