@@ -6,7 +6,8 @@ FROM tomcat:8.0-jre8
 
 # Copy jasperreports-server-<ver> zip file from resources dir.
 # Build will fail if file not present.
-COPY resources/jasperreports-server*zip /tmp/jasperserver.zip
+#COPY resources/jasperreports-server*zip /tmp/jasperserver.zip
+COPY resources/TIB*zip /tmp/jasperserver.zip
 
 RUN apt-get update && apt-get install -y postgresql-client unzip xmlstarlet && \
     rm -rf /var/lib/apt/lists/* && \
