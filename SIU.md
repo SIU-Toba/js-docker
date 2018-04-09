@@ -1,7 +1,6 @@
 # Instrucciones
 * ```git clone https://github.com/SIU-Toba/js-docker.git```
-* Bajar jasper server. Yo bajé la 6.4.2 de acá https://razaoinfo.dl.sourceforge.net/project/jasperserver/JasperServer/JasperReports%20Server%20Community%20Edition%206.4.2/TIB_js-jrs-cp_6.4.2_bin.zip
-Hay que bajar el archivo ```TIB_js-jrs-cp_6.4.2_bin.zip```
+* Bajar jasper server. Hay que bajar el archivo [TIB_js-jrs-cp_6.4.2_bin.zip](https://razaoinfo.dl.sourceforge.net/project/jasperserver/JasperServer/JasperReports%20Server%20Community%20Edition%206.4.2/TIB_js-jrs-cp_6.4.2_bin.zip)
 * Copiar el archivo bajado a la carpeta ```resources```
 * Instalar docker-compose https://docs.docker.com/compose/install/
 * Ejecutar
