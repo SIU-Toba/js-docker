@@ -1,169 +1,46 @@
 #!/bin/bash
 
-# Copyright (c) 2016. TIBCO Software Inc.
+# Copyright (c) 2019. TIBCO Software Inc.
 # This file is subject to the license terms contained
 # in the license file that is distributed with this file.
-# version: 6.3.0-v1.0.4
 
 # This script sets up and runs JasperReports Server on container start.
 # Default "run" command, set in Dockerfile, executes run_jasperserver.
-# If webapps/jasperserver-pro does not exist, run_jasperserver 
-# redeploys webapp. If "jasperserver" database does not exist,
-# run_jasperserver redeploys minimal database.
-# Additional "init" only calls init_database, which will try to recreate 
-# database and fail if DB exists.
+# Use jasperserver-pro-cmdline to initialize the repository database
 
 # Sets script to fail if any command fails.
 set -e
 
-setup_jasperserver() {
-  # If environment is not set, uses default values for postgres
-  DB_USER=${DB_USER:-postgres}
-  DB_PASSWORD=${DB_PASSWORD:-postgres}
-  DB_HOST=${DB_HOST:-postgres}
-  DB_PORT=${DB_PORT:-5432}
-  DB_NAME=${DB_NAME:-jasperserver}
-
-  # Simple default_master.properties. Modify according to
-  # JasperReports Server documentation.
-  cat >/usr/src/jasperreports-server/buildomatic/default_master.properties\
-<<-_EOL_
-appServerType=tomcat8
-appServerDir=$CATALINA_HOME
-dbType=postgresql
-dbHost=$DB_HOST
-dbUsername=$DB_USER
-dbPassword=$DB_PASSWORD
-dbPort=$DB_PORT
-js.dbName=$DB_NAME
-_EOL_
-
-  # Execute js-ant targets for installing/configuring
-  # JasperReports Server. Note that js-ant should be
-  # executed in buildomatic directory.
-  cd /usr/src/jasperreports-server/buildomatic/
-  for i in $@; do
-    # Default deploy-webapp-pro attempts to remove
-    # $CATALINA_HOME/webapps/jasperserver-pro path.
-    # This behaviour does not work if mounted volumes are used.
-    # Uses unzip to populate webapp directory and non-destructive
-    # targets for configuration
-    if [ $i == "deploy-webapp-pro" ]; then
-      mkdir -p $CATALINA_HOME/webapps/jasperserver-pro ;
-      unzip -o -q ../jasperserver-pro.war \
-        -d $CATALINA_HOME/webapps/jasperserver-pro
-      ./js-ant \
-        init-source-paths \
-        set-pro-webapp-name \
-        deploy-webapp-datasource-configs \
-        deploy-jdbc-jar \
-        -DwarTargetDir=$CATALINA_HOME/webapps/jasperserver-pro
-    else
-      # warTargetDir and webaAppName are set as
-      # workaround for database configuration regeneration.
-      ./js-ant $i \
-        -DwarTargetDir=$CATALINA_HOME/webapps/jasperserver-pro \
-        -DwebAppName=jasperserver-pro
-    fi
-  done
-}
+. /common-environment.sh
 
 run_jasperserver() {
-  # If jasperserver-pro webapp is not present or if only WEB-INF/logs present
-  # in tomcat webapps directory do deploy-webapp-pro.
-  # Starts upon webapp deployment as database may still be initializing.
-  # This speeds up overall startup because deploy-webapp-pro does
-  # not depend on database.
-  if [[ -d "$CATALINA_HOME/webapps/jasperserver-pro" ]]; then
-    if [[ `ls -1 $CATALINA_HOME/webapps/jasperserver-pro| wc -l` -le 1 \
-      || `ls -1 -v $CATALINA_HOME/webapps/jasperserver-pro| head -n 1` \
-      =~ "WEB-INF.*" ]]; then
-        setup_jasperserver deploy-webapp-pro
-    fi
-  else
-    setup_jasperserver deploy-webapp-pro
-  fi
 
-    
-  # Wait for PostgreSQL.
-  retry_postgresql
 
-  # Force regeneration of database configuration if variable is set.
-  # This supports changes to DB configuration for already created
-  # container.
-  if [[ ${JRS_DBCONFIG_REGEN} ]]; then
-    setup_jasperserver deploy-webapp-datasource-configs deploy-jdbc-jar
-  fi
- 
-  # Set up jasperserver database if it is not present.
-  if [[ `test_postgresql -l | grep -i ${DB_NAME:-jasperserver} | wc -l` < 1 \
-    ]]; then
-    setup_jasperserver set-pro-webapp-name \
-      create-js-db \
-      init-js-db-pro \
-      import-minimal-pro
-  fi
+  test_database_connection
+  
+  # Because default_master.properties could change on any launch,
+  # always do deploy-webapp-pro.
 
-  # Run deploy-jdbc-jar in the case that the tomcat container has been updated.
-  setup_jasperserver deploy-jdbc-jar
+  execute_buildomatic deploy-webapp-pro
 
-  config_license
+  # Apply customization zips if present
+  apply_customizations
 
-  # Set up phantomjs.
+  # setup phantomjs
   config_phantomjs
 
-  # If JRS_HTTPS_ONLY is set, set JasperReports Server to
-  # run only in HTTPS.
-  config_ssl
+  # If JRS_HTTPS_ONLY is set, sets JasperReports Server to
+  # run only in HTTPS. Update keystore and password if given
+  config_ports_and_ssl
 
-  # Apply customization zip if present.
-  config_customization
-
-  # Start tomcat.
-  catalina.sh run
+  # start tomcat
+  exec env JAVA_OPTS="$JAVA_OPTS" catalina.sh run
 }
 
-init_database() {
-  # Wait for PostgreSQL.
-  retry_postgresql
-  # Run-only db creation targets.
-  setup_jasperserver create-js-db init-js-db-pro import-minimal-pro
-}
 
-# Initial license handling.
-config_license() {
-  # If license file does not exist, copy evaluation license.
-  # Non-default location (~/ or /root) used to allow
-  # for storing license in a volume. To update license,
-  # replace license file and restart container
-  JRS_LICENSE=${JRS_LICENSE:-/usr/local/share/jasperreports-pro/license}
-  if [[ ! -f \
-    "${JRS_LICENSE}/jasperserver.license"\
-    ]]; then
-    cp /usr/src/jasperreports-server/jasperserver.license \
-      /usr/local/share/jasperreports-pro/license
-  fi
-}
-
-test_postgresql() {
-  export PGPASSWORD=${DB_PASSWORD:-postgres}
-  psql -h ${DB_HOST:-postgres} -p ${DB_PORT:-5432} -U ${DB_USER:-postgres} $@
-}
-
-retry_postgresql() {
-  # Retry 5 times to check PostgreSQL is accessible.
-  for retry in {1..5}; do
-    test_postgresql && echo "PostgreSQL accepting connections" && break || \
-      echo "Waiting for PostgreSQL..." && sleep 10;
-  done
-
-  # Fail if PostgreSQL is not accessible
-  test_postgresql || \
-    echo "Error: PostgreSQL on ${DB_HOST:-postgres} not accessible!"
-}
 
 config_phantomjs() {
-  # if phantomjs binary is present, update JaseperReports Server config.
+  # if phantomjs binary is present, update JasperReports Server config.
   if [[ -x "/usr/local/bin/phantomjs" ]]; then
     PATH_PHANTOM='\/usr\/local\/bin\/phantomjs'
     PATTERN1='com.jaspersoft.jasperreports'
@@ -182,47 +59,124 @@ is not correctly configured."
   fi
 }
 
-# Apply other runtime configurations.
-config_ssl() {
-  # If $JRS_HTTPS_ONLY is set in environment to "true", disable HTTP support
+config_ports_and_ssl() {
+  #
+  # pushing Tomcat to run on HTTP_PORT and HTTPS_PORT
+  echo "Tomcat to run on HTTP on ${HTTP_PORT} and HTTPS on ${HTTPS_PORT}"
+  sed -i "s/port=\"[0-9]\+\" protocol=\"HTTP\/1.1\"/port=\"${HTTP_PORT}\" protocol=\"HTTP\/1.1\"/" $CATALINA_HOME/conf/server.xml
+  sed -i "s/redirectPort=\"[0-9]\+\"/redirectPort=\"${HTTPS_PORT}\"/" $CATALINA_HOME/conf/server.xml
+
+  # if $JRS_HTTPS_ONLY is set in environment to true, disable HTTP support
   # in JasperReports Server.
-  if [[ $JRS_HTTPS_ONLY ]]; then
+  JRS_HTTPS_ONLY=${JRS_HTTPS_ONLY:-false}
+
+  if "$JRS_HTTPS_ONLY" = "true" ; then
+    echo "Setting HTTPS only within JasperReports Server"
     cd $CATALINA_HOME/webapps/jasperserver-pro/WEB-INF
     xmlstarlet ed --inplace \
       -N x="http://java.sun.com/xml/ns/j2ee" -u \
       "//x:security-constraint/x:user-data-constraint/x:transport-guarantee"\
       -v "CONFIDENTIAL" web.xml
     sed -i "s/=http:\/\//=https:\/\//g" js.quartz.properties
-    sed -i "s/${HTTP_PORT:-8080}/${HTTPS_PORT:-8443}/g" js.quartz.properties
+    sed -i "s/8080/${HTTPS_PORT:-8443}/g" js.quartz.properties
+  else
+    echo "NOT! Setting HTTPS only within JasperReports Server. Should actually turn it off, but cannot."
+  fi
+
+  SSL_CERT_PATH=${SSL_CERT_PATH:-${MOUNTS_HOME}/ssl-certificate}
+
+  if [ -d "$SSL_CERT_PATH" ]; then
+	  CERT_PATH_FILES=`find $SSL_CERT_PATH -iname ".keystore*" \
+		-exec readlink -f {} \;`
+	  
+	  # update the keystore and password if there
+	  if [[ ${#CERT_PATH_FILES} -ne 0 ]]; then
+		  # will only be one, if at all
+		  for keystore in $CERT_PATH_FILES; do
+			if [[ -f "$keystore" ]]; then
+			  echo "Deploying SSL Keystore $keystore"
+			  cp "${keystore}" /root
+			  xmlstarlet ed --inplace --subnode "/Server/Service/Connector[@port='${HTTPS_PORT:-8443}']" --type elem \ 
+					--var connector-ssl '$prev' \
+				--update '$connector-ssl' --type attr -n port -v "${HTTPS_PORT:-8443}" \
+				--update '$connector-ssl' --type attr -n keystoreFile  -v "/root/${keystore}" \
+				--update '$connector-ssl' --type attr -n keystorePass  -v "${KS_PASSWORD:-changeit}" \
+				${CATALINA_HOME}/conf/server.xml
+			  echo "Deployed SSL ${keystore} keystore"
+			fi
+		  done
+	  else
+		  # update existing server.xml. could have been overwritten by customization
+		  # xmlstarlet ed --inplace --subnode "/Server/Service/Connector[@port='${HTTPS_PORT:-8443}']" --type elem \ 
+		  #		--var connector-ssl '$prev' \
+		  #	--update '$connector-ssl' --type attr -n port -v "${HTTPS_PORT:-8443}" \
+		  #		--update '$connector-ssl' --type attr -n keystorePass  -v "${KS_PASSWORD}" \
+		  #		--update '$connector-ssl' --type attr -n keystoreFile  -v "/root/.keystore.p12" \
+		  #		${CATALINA_HOME}/conf/server.xml
+		  echo "No .keystore files. Did not update SSL"
+	  fi
+
+  # end if $SSL_CERT_PATH exists.
   fi
 
 }
 
-config_customization() {
-  # Unpack zips (if they exist) from the path
-  # /usr/local/share/jasperreports-pro/customization
-  # to the JasperReports Server web application path
+
+apply_customizations() {
+  # unpack zips (if exist) from path
+  # ${MOUNTS_HOME}/customization
+  # to JasperReports Server web application path
   # $CATALINA_HOME/webapps/jasperserver-pro/
-  # File sorted with natural sort.
-  JRS_CUSTOMIZATION=\
-${JRS_CUSTOMIZATION:-/usr/local/share/jasperreports-pro/customization}
-  JRS_CUSTOMIZATION_FILES=`find $JRS_CUSTOMIZATION -iname "*zip" \
-    -exec readlink -f {} \; | sort -V`
-  for customization in $JRS_CUSTOMIZATION_FILES; do
-    if [[ -f "$customization" ]]; then
-      unzip -o -q "$customization" \
-        -d $CATALINA_HOME/webapps/jasperserver-pro/
-    fi
-  done
+  # file sorted with natural sort
+  JRS_CUSTOMIZATION=${JRS_CUSTOMIZATION:-${MOUNTS_HOME}/customization}
+  if [ -d "$JRS_CUSTOMIZATION" ]; then
+	  echo "Deploying Customizations from $JRS_CUSTOMIZATION"
+
+	  JRS_CUSTOMIZATION_FILES=`find $JRS_CUSTOMIZATION -iname "*zip" \
+		-exec readlink -f {} \; | sort -V`
+	  # find . -path ./lower -prune -o -name "*txt"
+	  for customization in $JRS_CUSTOMIZATION_FILES; do
+		if [[ -f "$customization" ]]; then
+		  if unzip -l $customization | grep install.sh ; then
+			echo "Installing ${customization##*/}"
+			mkdir -p "/tmp/jrs-installs/${customization##*/}"
+			unzip -o -q "$customization" -d "/tmp/jrs-installs/${customization##*/}"
+			cd "/tmp/jrs-installs/${customization##*/}"
+			chmod +x -R *.sh
+			./install.sh
+			cd ..
+			rm -rf "${customization##*/}"
+		  else
+			echo "Unzipping $customization into JasperReports Server webapp"
+			unzip -o -q "$customization" \
+				-d $CATALINA_HOME/webapps/jasperserver-pro/
+		  fi
+		fi
+	  done
+  fi
+  
+  TOMCAT_CUSTOMIZATION=${TOMCAT_CUSTOMIZATION:-${MOUNTS_HOME}/tomcat-customization}
+  if [ -d "$TOMCAT_CUSTOMIZATION" ]; then
+	  echo "Deploying Tomcat Customizations from $TOMCAT_CUSTOMIZATION"
+	  TOMCAT_CUSTOMIZATION_FILES=`find $TOMCAT_CUSTOMIZATION -iname "*zip" \
+		-exec readlink -f {} \; | sort -V`
+	  for customization in $TOMCAT_CUSTOMIZATION_FILES; do
+		if [[ -f "$customization" ]]; then
+			echo "Unzipping $customization into Tomcat"
+			unzip -o -q "$customization" \
+				-d $CATALINA_HOME
+		fi
+	  done
+	fi
 }
+
+
+initialize_deploy_properties
 
 case "$1" in
   run)
     shift 1
     run_jasperserver "$@"
-    ;;
-  init)
-    init_database
     ;;
   *)
     exec "$@"
