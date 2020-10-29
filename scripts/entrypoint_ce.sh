@@ -134,7 +134,7 @@ init_database() {
 
 test_postgresql() {
   export PGPASSWORD=${DB_PASSWORD:-postgres}
-  psql -h ${DB_HOST:-postgres} -p ${DB_PORT:-5432} -U ${DB_USER:-postgres} $@
+  psql -h ${DB_HOST:-postgres} -p ${DB_PORT:-5432} -U ${DB_USER:-postgres} -l $@
 }
 
 retry_postgresql() {
