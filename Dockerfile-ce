@@ -1,10 +1,12 @@
+# syntax=docker/dockerfile:experimental
+
 # Copyright (c) 2020. TIBCO Software Inc.
 # This file is subject to the license terms contained
 # in the license file that is distributed with this file.
 
 # Copy jasperreports-server-<ver> zip file from resources dir.
 # Build will fail if file not present.
-COPY resources/TIB*zip /tmp/jasperserver.zip
+# COPY resources/TIB*zip /tmp/jasperserver.zip
 # Tomcat official Docker Hub images are not using Oracle anymore, hence the rename
 #FROM tomcat:9.0-jre8
 
@@ -34,8 +36,8 @@ ENV JRS_HTTPS_ONLY         ${JRS_HTTPS_ONLY:-false}
 ENV HTTP_PORT             ${HTTP_PORT:-8080}
 ENV HTTPS_PORT             ${HTTPS_PORT:-8443}
 ENV POSTGRES_JDBC_DRIVER_VERSION ${POSTGRES_JDBC_DRIVER_VERSION:-42.2.5}
-ENV JASPERREPORTS_SERVER_VERSION ${JASPERREPORTS_SERVER_VERSION:-7.5.1}
-ENV EXPLODED_INSTALLER_DIRECTORY ${EXPLODED_INSTALLER_DIRECTORY:-resources/jasperreports-server-pro-$JASPERREPORTS_SERVER_VERSION-bin}
+ENV JASPERREPORTS_SERVER_VERSION ${JASPERREPORTS_SERVER_VERSION:-7.5.0}
+ENV EXPLODED_INSTALLER_DIRECTORY ${EXPLODED_INSTALLER_DIRECTORY:-resources/jasperreports-server-cp-$JASPERREPORTS_SERVER_VERSION-bin}
 
 # This Dockerfile requires an exploded JasperReports Server WAR file installer file 
 # EXPLODED_INSTALLER_DIRECTORY (default jasperreports-server-bin/) directory below the Dockerfile.
@@ -43,7 +45,7 @@ ENV EXPLODED_INSTALLER_DIRECTORY ${EXPLODED_INSTALLER_DIRECTORY:-resources/jaspe
 RUN mkdir -p /usr/src/jasperreports-server
 
 # get the WAR and license
-COPY ${EXPLODED_INSTALLER_DIRECTORY}/jasperserver-pro $CATALINA_HOME/webapps/jasperserver-pro/
+COPY ${EXPLODED_INSTALLER_DIRECTORY}/jasperserver $CATALINA_HOME/webapps/jasperserver/
 COPY ${EXPLODED_INSTALLER_DIRECTORY}/TIB* /usr/src/jasperreports-server/
 
 # Ant
@@ -64,7 +66,7 @@ COPY scripts /
 
 RUN echo "nameserver 8.8.8.8" | tee /etc/resolv.conf > /dev/null && \
     chmod +x /*.sh && \
-    /installPackagesForJasperserver-pro.sh > /dev/null && \
+    /installPackagesForJasperserver-ce.sh > /dev/null && \
 	echo "finished installing packages" && \
     rm -rf $CATALINA_HOME/webapps/ROOT && \
     rm -rf $CATALINA_HOME/webapps/docs && \
@@ -127,7 +129,7 @@ RUN echo "nameserver 8.8.8.8" | tee /etc/resolv.conf > /dev/null && \
 # Expose ports. Note that you must do one of the following:
 # map them to local ports at container runtime via "-p 8080:8080 -p 8443:8443"
 # or use dynamic ports.
-EXPOSE ${HTTP_PORT} ${HTTPS_PORT}
+EXPOSE ${HTTP_PORT:-8080} ${HTTPS_PORT:-8443}
 
 COPY scripts/entrypoint-ce.sh /
 ENTRYPOINT ["/entrypoint-ce.sh"]
